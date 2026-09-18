@@ -120,6 +120,37 @@ export function itemStatus(item, car, odoLog) {
   };
 }
 
+// Spending summary over a list of history entries. period: 'year' | '12m' | 'all'.
+export function costSummary(logs, period) {
+  const now = new Date();
+  const year = String(now.getFullYear());
+  const cutoff12 = todayStr(new Date(now.getTime() - 365 * 86400000));
+  const cutoff30 = todayStr(new Date(now.getTime() - 30 * 86400000));
+  const sum = (arr) => arr.reduce((s, l) => s + (l.cost || 0), 0);
+
+  const inPeriod = logs.filter((l) => period === 'all' || (period === 'year' ? l.date.startsWith(year) : l.date >= cutoff12));
+
+  const byName = new Map();
+  inPeriod.forEach((l) => { if (l.cost) byName.set(l.name, (byName.get(l.name) || 0) + l.cost); });
+  const total = sum(inPeriod);
+  const types = [...byName].map(([name, amount]) => ({ name, amount, pct: total ? (amount / total) * 100 : 0 }))
+    .sort((a, b) => b.amount - a.amount);
+
+  const months = [];
+  for (let i = 11; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const key = `${d.getFullYear()}-${pad(d.getMonth() + 1)}`;
+    months.push({ key, label: d.toLocaleString('en-GB', { month: 'short' }), amount: sum(logs.filter((l) => l.date.startsWith(key))) });
+  }
+
+  return {
+    total, types, months,
+    last30: sum(logs.filter((l) => l.date >= cutoff30)),
+    missing: inPeriod.filter((l) => !l.cost).length,
+    count: inPeriod.length,
+  };
+}
+
 export function carRows(data, car) {
   return data.items
     .filter((i) => i.carId === car.id)

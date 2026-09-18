@@ -1,11 +1,12 @@
 import * as S from './store.js';
 import {
   PRESETS, esc, fmtNum, money, plural, todayStr, nowTime, fmtDate,
-  carRows, allRows, countLevels, itemStatus,
+  carRows, allRows, countLevels, itemStatus, costSummary,
 } from './logic.js';
 
 const root = document.getElementById('app');
 let carTab = 'maintenance';
+let costPeriod = 'year';
 
 const num = (v) => {
   const s = String(v ?? '').replace(/,/g, '').trim();
@@ -84,6 +85,9 @@ function dashboard() {
   const n = countLevels(rows);
   const urgent = rows.filter((r) => r.st.level === 'overdue' || r.st.level === 'soon');
 
+  const activeIds = new Set(cars.map((c) => c.id));
+  const yearSpent = costSummary(S.data.logs.filter((l) => activeIds.has(l.carId)), 'year').total;
+
   const lastBackup = S.data.settings.lastBackup;
   const needBackup = cars.length && (!lastBackup || Date.now() - lastBackup > 30 * 86400000);
 
@@ -144,8 +148,49 @@ function dashboard() {
           </div>`;
         }).join('')}
       </div>
+      ${yearSpent ? `<p class="spent-line">Spent this year across all cars: <b>${money(yearSpent)}</b></p>` : ''}
     </section>`;
   return html;
+}
+
+const periodLabel = { year: 'This year', '12m': 'Last 12 months', all: 'All time' };
+
+function costsView(logs) {
+  const s = costSummary(logs, costPeriod);
+  if (!logs.length) return `<div class="empty small"><p>No costs yet. Enter a cost when you mark something as done and it will be summed up here.</p></div>`;
+
+  const peak = s.months.reduce((a, b) => (b.amount > a.amount ? b : a), s.months[0]);
+  const max = peak.amount || 1;
+  return `
+    <div class="pills">
+      ${Object.entries(periodLabel).map(([k, v]) => `<button class="pill ${costPeriod === k ? 'on' : ''}" data-act="period" data-p="${k}">${v}</button>`).join('')}
+    </div>
+    <div class="card cost-total">
+      <span class="muted">${periodLabel[costPeriod]}</span>
+      <div class="big">${money(s.total)}</div>
+      <span class="muted">Last 30 days: <b>${money(s.last30)}</b></span>
+    </div>
+    ${s.missing ? `<p class="note">${plural(s.missing, 'entry').replace('entrys', 'entries')} in this period ${s.missing === 1 ? 'has' : 'have'} no cost and ${s.missing === 1 ? "isn't" : "aren't"} counted.</p>` : ''}
+
+    <h3 class="section-title">By type</h3>
+    ${s.types.length ? `<div class="card stack">${s.types.map((t) => `
+      <div class="crow">
+        <div class="crow-top"><span>${esc(t.name)}</span><b>${money(t.amount)}</b></div>
+        <div class="bar"><i style="width:${Math.max(t.pct, 2).toFixed(1)}%"></i></div>
+        <small>${Math.round(t.pct)}%</small>
+      </div>`).join('')}</div>` : `<p class="muted">No costs recorded in this period.</p>`}
+
+    <h3 class="section-title">Last 12 months</h3>
+    <div class="card">
+      <div class="months">
+        ${s.months.map((m) => `
+          <div class="mcol" title="${esc(m.label)}: ${money(m.amount)}">
+            <div class="mbar-wrap"><div class="mbar ${m.amount ? '' : 'zero'}" style="height:${m.amount ? Math.max((m.amount / max) * 100, 4) : 0}%"></div></div>
+            <span>${esc(m.label)}</span>
+          </div>`).join('')}
+      </div>
+      ${peak.amount ? `<p class="muted peak">Highest: <b>${esc(peak.label)}</b> &middot; ${money(peak.amount)}</p>` : ''}
+    </div>`;
 }
 
 function carPage(id) {
@@ -168,6 +213,8 @@ function carPage(id) {
           <button class="btn primary" data-act="quickSetup" data-id="${id}">Quick setup</button>
           <button class="btn" data-act="addItem" data-id="${id}">Add custom item</button>
         </div>`;
+  } else if (carTab === 'costs') {
+    body = costsView(logs);
   } else {
     body = logs.length ? `
       <div class="spent">Total spent <b>${money(spent)}</b> <span>&middot; ${plural(logs.length, 'entry').replace('entrys', 'entries')}</span></div>
@@ -200,6 +247,7 @@ function carPage(id) {
     <div class="seg">
       <button class="${carTab === 'maintenance' ? 'on' : ''}" data-act="tab" data-tab="maintenance">Maintenance</button>
       <button class="${carTab === 'history' ? 'on' : ''}" data-act="tab" data-tab="history">History</button>
+      <button class="${carTab === 'costs' ? 'on' : ''}" data-act="tab" data-tab="costs">Costs</button>
     </div>
     ${body}`;
 }
@@ -423,6 +471,7 @@ const actions = {
   openSettings() { location.hash = '#/settings'; },
   openCar(d) { carTab = 'maintenance'; location.hash = '#/car/' + d.id; },
   tab(d) { carTab = d.tab; render(); },
+  period(d) { costPeriod = d.p; render(); },
 
   addCar() { openSheet('Add car', carForm(null)); },
 
