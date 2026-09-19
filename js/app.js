@@ -92,6 +92,35 @@ function odoInline(c, { label = 'Save', compact = false } = {}) {
     </form>`;
 }
 
+function engineIcon() {
+  return '<svg viewBox="80 120 350 270" fill="currentColor" aria-hidden="true"><rect x="206" y="128" width="100" height="26" rx="9"/><rect x="240" y="150" width="32" height="50"/><path d="M150 196H330L374 240V380H150Z" stroke="currentColor" stroke-width="16" stroke-linejoin="round"/><rect x="86" y="258" width="34" height="96" rx="9"/><rect x="114" y="292" width="44" height="28"/><rect x="368" y="268" width="56" height="72" rx="10"/></svg>';
+}
+
+// Health ring: arc = share of items that are fine, colour = worst state, centre = how many need attention.
+function ring(cn) {
+  const total = cn.overdue + cn.soon + cn.ok + cn.unset;
+  const attn = cn.overdue + cn.soon;
+  const level = !total ? 'unset' : cn.overdue ? 'overdue' : cn.soon ? 'soon' : 'ok';
+  const C = 2 * Math.PI * 18;
+  const share = total ? Math.max((cn.ok + cn.unset) / total, 0.08) : 0;
+  return `<span class="ring ${level}" aria-label="${attn} need attention">
+    <svg viewBox="0 0 44 44"><circle cx="22" cy="22" r="18" class="ring-bg"/><circle cx="22" cy="22" r="18" class="ring-arc" stroke-dasharray="${(C * share).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 22 22)"/></svg>
+    <b>${!total ? '&ndash;' : attn || '&#10003;'}</b></span>`;
+}
+
+const NAV_ICONS = {
+  home: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.5 12 5l8 6.5"/><path d="M6 10.5V19h12v-8.5"/></svg>',
+  gear: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v2.5M12 18.5V21M3 12h2.5M18.5 12H21M5.6 5.6l1.8 1.8M16.6 16.6l1.8 1.8M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8"/></svg>',
+};
+
+function navHtml() {
+  const settings = (location.hash || '#/') === '#/settings';
+  return `
+    <button class="nav-item ${settings ? '' : 'on'}" data-act="home">${NAV_ICONS.home}<span>Home</span></button>
+    <button class="nav-plus" data-act="openAdd" aria-label="Quick actions">+</button>
+    <button class="nav-item ${settings ? 'on' : ''}" data-act="openSettings">${NAV_ICONS.gear}<span>Settings</span></button>`;
+}
+
 function carIcon() {
   return '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16l1.4-5.2A2 2 0 0 1 8.3 9.3h7.4a2 2 0 0 1 1.9 1.5L19 16"/><path d="M3.5 16h17v3h-2.2v-1.2H5.7V19H3.5z"/><circle cx="7.5" cy="13.2" r=".6" fill="currentColor"/><circle cx="16.5" cy="13.2" r=".6" fill="currentColor"/></svg>';
 }
@@ -108,9 +137,10 @@ function itemRow(r, { showCar, showDone }) {
           <span class="row-title">${esc(item.name)}</span>
           <span class="row-status ${st.level}">${esc(st.main)}</span>
           <span class="row-sub">${showCar ? esc(car.name) + (st.sub ? ' · ' : '') : ''}${esc(st.sub)}</span>
+          ${st.progress != null ? `<span class="meter ${st.level}"><i style="width:${Math.min(st.progress, 1) * 100}%"></i></span>` : ''}
         </span>
       </button>
-      ${showDone ? `<button class="btn small" data-act="logItem" data-id="${item.id}">${item.type === 'doc' ? 'Renew' : 'Done'}</button>` : ''}
+      ${showDone ? `<button class="btn small" data-act="logItem" data-id="${item.id}">${item.type === 'doc' ? 'Renew' : 'Log'}</button>` : ''}
     </div>`;
 }
 
@@ -119,6 +149,7 @@ function dashboard() {
   const rows = allRows(S.data);
   const n = countLevels(rows);
   const urgent = rows.filter((r) => r.st.level === 'overdue' || r.st.level === 'soon');
+  const heroLevel = n.overdue ? 'overdue' : n.soon ? 'soon' : 'ok';
 
   const activeIds = new Set(cars.map((c) => c.id));
   const yearSpent = costSummary(S.data.logs.filter((l) => activeIds.has(l.carId)), 'year').total;
@@ -134,8 +165,7 @@ function dashboard() {
 
   let html = `
     <header class="top">
-      <h1>Oil-Be-Back</h1>
-      <button class="icon-btn" data-act="openSettings" aria-label="Settings">&#9881;</button>
+      <h1><span class="logo">${engineIcon()}</span>Oil-Be-Back</h1>
     </header>`;
 
   if (!cars.length) {
@@ -149,6 +179,14 @@ function dashboard() {
   }
 
   html += `
+    <div class="hero ${heroLevel}">
+      <span class="hero-ico">${engineIcon()}</span>
+      <div class="hero-text">
+        <b>${n.overdue ? `${n.overdue} overdue` : n.soon ? `${n.soon} due soon` : 'All good'}</b>
+        <span>${[n.overdue && n.soon ? `${n.soon} due soon` : '', n.overdue || n.soon ? '' : 'Nothing needs attention', plural(cars.length, 'car')].filter(Boolean).join(' · ')}</span>
+      </div>
+    </div>
+
     ${staleCars.length ? `
       <div class="odo-check">
         <b>Odometer check</b>
@@ -159,16 +197,13 @@ function dashboard() {
           </div>`).join('')}
       </div>` : ''}
     ${needBackup ? `<button class="banner" data-act="openSettings">Your data only lives on this device. <b>Back it up</b> &rsaquo;</button>` : ''}
-    <div class="summary">
-      <div class="sum overdue"><b>${n.overdue}</b><span>Overdue</span></div>
-      <div class="sum soon"><b>${n.soon}</b><span>Due soon</span></div>
-      <div class="sum"><b>${cars.length}</b><span>${cars.length === 1 ? 'Car' : 'Cars'}</span></div>
-    </div>
-
     <section>
       <h3 class="section-title">Priorities</h3>
       ${urgent.length
-        ? `<div class="list">${urgent.map((r) => itemRow(r, { showCar: true, showDone: true })).join('')}</div>`
+        ? [['overdue', 'Overdue'], ['soon', 'Due soon']].map(([lvl, label]) => {
+            const grp = urgent.filter((r) => r.st.level === lvl);
+            return grp.length ? `<h4 class="grp ${lvl}">${label} &middot; ${grp.length}</h4><div class="list">${grp.map((r) => itemRow(r, { showCar: true, showDone: true })).join('')}</div>` : '';
+          }).join('')
         : `<div class="allclear"><b>All clear</b><span>Nothing overdue or due soon across your cars.</span></div>`}
     </section>
 
@@ -187,7 +222,7 @@ function dashboard() {
           return `
           <div class="card car-card">
             <button class="car-main" data-act="openCar" data-id="${c.id}">
-              <span class="car-ico">${carIcon()}</span>
+              ${ring(cn)}
               <span class="car-text">
                 <span class="car-name">${esc(c.name)}</span>
                 <span class="car-meta">${c.plate ? esc(c.plate) + ' · ' : ''}${fmtNum(c.odo)} km</span>
@@ -336,6 +371,7 @@ function render() {
   else if (h === '#/settings') html = settingsPage();
   else html = dashboard();
   root.innerHTML = html;
+  document.getElementById('nav').innerHTML = navHtml();
   if (editingOdo) {
     const input = root.querySelector('.car-card form[data-inline] input, .car-head form[data-inline] input');
     if (input) { input.focus({ preventScroll: true }); input.select(); input.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
@@ -576,6 +612,37 @@ const actions = {
 
   addCar() { openSheet('Add car', carForm(null)); },
 
+  openAdd() {
+    const has = S.data.cars.some((c) => !c.archived);
+    openSheet('Quick actions', `
+      <div class="stack">
+        ${has ? `
+          <button class="qa" data-act="pickItem"><b>Log maintenance</b><small>Pick a car and an item</small></button>
+          <button class="qa" data-act="pickOdo"><b>Update odometer</b><small>Keeps km reminders accurate</small></button>` : ''}
+        <button class="qa" data-act="addCar"><b>Add a car</b><small>Track another vehicle</small></button>
+      </div>`);
+  },
+  pickItem() {
+    const body = S.data.cars.filter((c) => !c.archived).map((c) => {
+      const rows = carRows(S.data, c);
+      return `<h3 class="section-title">${esc(c.name)}</h3>` + (rows.length
+        ? `<div class="list">${rows.map((r) => `
+            <div class="row"><button class="row-main" data-act="logItem" data-id="${r.item.id}">
+              <span class="dot ${r.st.level}"></span>
+              <span class="row-text"><span class="row-title">${esc(r.item.name)}</span><span class="row-status ${r.st.level}">${esc(r.st.main)}</span></span>
+            </button></div>`).join('')}</div>`
+        : '<p class="muted">No items yet.</p>');
+    }).join('');
+    openSheet('Log maintenance', body);
+  },
+  pickOdo() {
+    openSheet('Update odometer', S.data.cars.filter((c) => !c.archived).map((c) => `
+      <div class="odo-check-row pick">
+        <span class="odo-check-name">${esc(c.name)}<small>${odoAgeDays(c) == null ? 'never updated' : odoAgeDays(c) === 0 ? 'updated today' : odoAgeDays(c) + ' days ago'}</small></span>
+        ${odoInline(c, { label: 'Save', compact: true })}
+      </div>`).join(''));
+  },
+
   editOdo(d) { editingOdo = d.id; render(); },
   cancelOdo() { editingOdo = null; render(); },
 
@@ -755,6 +822,7 @@ window.addEventListener('hashchange', () => {
   editingOdo = null;
   render();
   window.scrollTo(0, 0);
+  root.classList.remove('enter'); void root.offsetWidth; root.classList.add('enter');
   if (pendingQuick) { const id = pendingQuick; pendingQuick = null; actions.quickSetup({ id }); }
 });
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });

@@ -111,8 +111,22 @@ export function itemStatus(item, car, odoLog) {
     level = overdue ? 'overdue' : kmSoon || dateSoon ? 'soon' : 'ok';
   }
 
+  // How much of the interval has been used up (0 = just serviced, 1 = due, >1 = overdue).
+  let progress = null;
+  if (item.type !== 'doc') {
+    if (kmLeft != null) progress = Math.max(0, (car.odo - item.lastOdo) / item.intervalKm);
+    if (dueDate && item.lastDate) {
+      const start = parseDate(item.lastDate);
+      const total = daysBetween(start, dueDate);
+      if (total > 0) {
+        const used = Math.max(0, daysBetween(start, t) / total);
+        progress = progress == null ? used : Math.max(progress, used);
+      }
+    }
+  }
+
   return {
-    level,
+    level, progress,
     eff: parts.length ? parts[0].eff : Infinity,
     dueDate, dueOdo, kmLeft, daysLeft, rateKnown,
     main: parts[0] ? parts[0].text : 'Not set up',
