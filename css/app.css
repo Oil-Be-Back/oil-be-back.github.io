@@ -113,7 +113,8 @@ section:first-of-type .section-title { margin-top: 0; }
 .badge.soon { color: var(--soon); background: color-mix(in srgb, var(--soon) 15%, transparent); }
 .badge.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 13%, transparent); }
 
-.car-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.car-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.car-head .odo-inline { flex-basis: 100%; }
 .odo { font-size: 32px; font-weight: 800; letter-spacing: -.02em; }
 .odo small { font-size: 15px; color: var(--muted); font-weight: 600; }
 
@@ -176,8 +177,10 @@ input[type="date"], input[type="time"] { min-height: 46px; }
 .toast {
   position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 24px); transform: translate(-50%, 20px);
   background: var(--text); color: var(--bg); padding: 10px 16px; border-radius: 99px; font-weight: 600; font-size: 14px;
-  opacity: 0; transition: all .22s; z-index: 100; max-width: 90vw; text-align: center;
+  opacity: 0; transition: all .22s; z-index: 100; max-width: 92vw; text-align: center;
+  display: flex; align-items: center; gap: 14px; white-space: nowrap;
 }
+.toast button { background: none; border: 0; padding: 0; font-weight: 800; color: color-mix(in srgb, var(--brand) 85%, var(--bg)); }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 
 /* costs */
@@ -204,3 +207,16 @@ input[type="date"], input[type="time"] { min-height: 46px; }
 .peak b { color: var(--text); }
 .spent-line { color: var(--muted); font-size: 14px; margin: 14px 2px 0; }
 .spent-line b { color: var(--text); }
+
+/* inline odometer editing */
+.odo-inline { display: flex; align-items: center; gap: 8px; }
+.odo-inline input { flex: 1; min-width: 0; padding: 9px 12px; font-weight: 700; }
+.odo-inline .unit { color: var(--muted); font-size: 14px; }
+.odo-inline.compact input { padding: 8px 10px; }
+.odo-check { background: var(--card); border: 1px solid color-mix(in srgb, var(--soon) 45%, var(--line)); border-radius: var(--radius); padding: 14px; margin-bottom: 14px; display: flex; flex-direction: column; gap: 12px; }
+.odo-check > b { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--soon); }
+.odo-check-row { display: flex; flex-direction: column; gap: 8px; }
+.odo-check-name { font-weight: 650; display: flex; justify-content: space-between; gap: 8px; }
+.odo-check-name small { color: var(--muted); font-weight: 500; font-size: 13px; }
+
+.sticky-cta { position: sticky; bottom: 0; box-shadow: 0 -14px 16px -6px var(--bg); }

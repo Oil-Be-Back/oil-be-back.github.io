@@ -17,13 +17,24 @@ const num = (v) => {
 
 /* ---------- small UI helpers ---------- */
 
-function toast(msg) {
+// Optional actions render as buttons inside the toast, e.g. Undo after a quick log.
+function toast(msg, actions = []) {
+  document.querySelectorAll('.toast').forEach((t) => t.remove());
   const el = document.createElement('div');
   el.className = 'toast';
-  el.textContent = msg;
+  const text = document.createElement('span');
+  text.textContent = msg;
+  el.appendChild(text);
+  const hide = () => { el.classList.remove('show'); setTimeout(() => el.remove(), 250); };
+  actions.forEach((a) => {
+    const b = document.createElement('button');
+    b.textContent = a.label;
+    b.addEventListener('click', () => { hide(); a.run(); });
+    el.appendChild(b);
+  });
   document.body.appendChild(el);
   requestAnimationFrame(() => el.classList.add('show'));
-  setTimeout(() => { el.classList.remove('show'); setTimeout(() => el.remove(), 250); }, 2200);
+  setTimeout(hide, actions.length ? 6000 : 2200);
 }
 
 function openSheet(title, body) {
@@ -40,6 +51,9 @@ function openSheet(title, body) {
   document.body.appendChild(wrap);
   document.body.classList.add('noscroll');
   requestAnimationFrame(() => wrap.classList.add('open'));
+  // Focus inside the same tap so iOS brings up the right keyboard immediately.
+  const first = wrap.querySelector('[data-autofocus]');
+  if (first) { first.focus({ preventScroll: true }); if (first.select) first.select(); }
   return wrap;
 }
 
@@ -55,6 +69,27 @@ const levelLabel = { overdue: 'Overdue', soon: 'Due soon', ok: 'Good', unset: 'N
 function setOdo(car, odo, date = todayStr()) {
   car.odo = odo;
   S.data.odoLog.push({ carId: car.id, date, odo });
+}
+
+// Days since the odometer was last confirmed (null if never).
+function odoAgeDays(car) {
+  const dates = S.data.odoLog.filter((p) => p.carId === car.id).map((p) => p.date);
+  if (!dates.length) return null;
+  const last = dates.reduce((a, b) => (a > b ? a : b));
+  return Math.round((new Date(todayStr()) - new Date(last)) / 86400000);
+}
+
+let editingOdo = null; // car id whose odometer is being edited inline
+let pendingQuick = null; // car id that should open Quick setup after the next render
+
+function odoInline(c, { label = 'Save', compact = false } = {}) {
+  return `
+    <form data-form="odo" data-inline="1" data-id="${c.id}" class="odo-inline ${compact ? 'compact' : ''}">
+      <input name="odo" type="number" inputmode="numeric" min="0" required value="${c.odo}" aria-label="Odometer in km" data-odo-inline>
+      <span class="unit">km</span>
+      <button class="btn primary small" type="submit">${label}</button>
+      <button class="btn ghost small" type="button" data-act="cancelOdo" aria-label="Cancel">&#10005;</button>
+    </form>`;
 }
 
 function carIcon() {
@@ -88,6 +123,12 @@ function dashboard() {
   const activeIds = new Set(cars.map((c) => c.id));
   const yearSpent = costSummary(S.data.logs.filter((l) => activeIds.has(l.carId)), 'year').total;
 
+  // Kilometre-based reminders are only as good as the last odometer reading.
+  const staleCars = cars
+    .map((c) => ({ c, age: odoAgeDays(c) }))
+    .filter(({ age }) => age == null || age >= 14)
+    .filter(({ c }) => S.data.items.some((i) => i.carId === c.id && i.intervalKm));
+
   const lastBackup = S.data.settings.lastBackup;
   const needBackup = cars.length && (!lastBackup || Date.now() - lastBackup > 30 * 86400000);
 
@@ -108,6 +149,15 @@ function dashboard() {
   }
 
   html += `
+    ${staleCars.length ? `
+      <div class="odo-check">
+        <b>Odometer check</b>
+        ${staleCars.map(({ c, age }) => `
+          <div class="odo-check-row">
+            <span class="odo-check-name">${esc(c.name)}<small>${age == null ? 'never updated' : age + ' days ago'}</small></span>
+            ${odoInline(c, { label: 'Update', compact: true })}
+          </div>`).join('')}
+      </div>` : ''}
     ${needBackup ? `<button class="banner" data-act="openSettings">Your data only lives on this device. <b>Back it up</b> &rsaquo;</button>` : ''}
     <div class="summary">
       <div class="sum overdue"><b>${n.overdue}</b><span>Overdue</span></div>
@@ -144,7 +194,7 @@ function dashboard() {
               </span>
               <span class="badges">${badges}</span>
             </button>
-            <button class="btn ghost small" data-act="updateOdo" data-id="${c.id}">Update odometer</button>
+            ${editingOdo === c.id ? odoInline(c) : `<button class="btn ghost small" data-act="editOdo" data-id="${c.id}">Update odometer</button>`}
           </div>`;
         }).join('')}
       </div>
@@ -242,7 +292,7 @@ function carPage(id) {
         <div class="car-meta">${car.plate ? esc(car.plate) : 'No plate'}</div>
         <div class="odo">${fmtNum(car.odo)} <small>km</small></div>
       </div>
-      <button class="btn small" data-act="updateOdo" data-id="${id}">Update odometer</button>
+      ${editingOdo === id ? odoInline(car) : `<button class="btn small" data-act="editOdo" data-id="${id}">Update odometer</button>`}
     </div>
     <div class="seg">
       <button class="${carTab === 'maintenance' ? 'on' : ''}" data-act="tab" data-tab="maintenance">Maintenance</button>
@@ -286,6 +336,10 @@ function render() {
   else if (h === '#/settings') html = settingsPage();
   else html = dashboard();
   root.innerHTML = html;
+  if (editingOdo) {
+    const input = root.querySelector('.car-card form[data-inline] input, .car-head form[data-inline] input');
+    if (input) { input.focus({ preventScroll: true }); input.select(); input.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+  }
 }
 
 /* ---------- forms ---------- */
@@ -296,7 +350,7 @@ const field = (label, input, hint = '') =>
 function carForm(car) {
   return `
     <form data-form="car" data-id="${car ? car.id : ''}" class="form">
-      ${field('Name', `<input name="name" required maxlength="40" placeholder="e.g. Camry 2022" value="${esc(car?.name)}" autocomplete="off">`)}
+      ${field('Name', `<input name="name" required maxlength="40" placeholder="e.g. Camry 2022" value="${esc(car?.name)}" autocomplete="off" data-autofocus>`)}
       ${field('Plate (optional)', `<input name="plate" maxlength="20" value="${esc(car?.plate)}" autocomplete="off">`)}
       ${field('Odometer (km)', `<input name="odo" type="number" inputmode="numeric" min="0" required value="${car ? car.odo : ''}">`)}
       <button class="btn primary block" type="submit">${car ? 'Save' : 'Add car'}</button>
@@ -325,21 +379,23 @@ function itemForm(car, item) {
     </form>`;
 }
 
-function logForm(item, car) {
+function logForm(item, car, { existing = null, focus = 'cost' } = {}) {
   const doc = item.type === 'doc';
+  const v = existing || { date: todayStr(), time: nowTime(), odo: car.odo, cost: '', expiry: '', notes: '' };
+  const af = (name) => (focus === name ? 'data-autofocus' : '');
   return `
-    <form data-form="log" data-id="${item.id}" class="form">
-      <p class="muted">${esc(car.name)} &middot; ${esc(item.name)}</p>
+    <form data-form="${existing ? 'logEdit' : 'log'}" data-id="${existing ? existing.id : item.id}" class="form">
+      <p class="muted">${esc(car.name)} &middot; ${esc(item.name)}${focus === 'odo' && !existing ? ' &middot; <b>confirm the odometer</b>' : ''}</p>
       <div class="grid">
-        ${field('Date', `<input name="date" type="date" required value="${todayStr()}">`)}
-        ${field('Time', `<input name="time" type="time" value="${nowTime()}">`)}
-        ${field(doc ? 'Odometer (optional)' : 'Odometer (km)', `<input name="odo" type="number" inputmode="numeric" min="0" ${doc ? '' : 'required'} value="${car.odo}">`)}
-        ${field('Cost (SAR)', `<input name="cost" type="number" inputmode="decimal" min="0" step="any" placeholder="0">`)}
+        ${field('Date', `<input name="date" type="date" required value="${v.date}">`)}
+        ${field('Time', `<input name="time" type="time" value="${esc(v.time)}">`)}
+        ${field(doc ? 'Odometer (optional)' : 'Odometer (km)', `<input name="odo" type="number" inputmode="numeric" min="0" ${doc ? '' : 'required'} value="${v.odo ?? ''}" ${af('odo')}>`)}
+        ${field('Cost (SAR)', `<input name="cost" type="number" inputmode="decimal" min="0" step="any" placeholder="0" value="${v.cost || ''}" ${af('cost')}>`)}
       </div>
-      ${field(doc ? 'New expiry date' : 'Valid until (optional)', `<input name="expiry" type="date" ${doc ? 'required' : ''}>`,
+      ${field(doc ? 'New expiry date' : 'Valid until (optional)', `<input name="expiry" type="date" ${doc ? 'required' : ''} value="${v.expiry || ''}">`,
         doc ? '' : 'Only fill this if the part or service has its own expiry date. Otherwise the next due date comes from the interval.')}
-      ${field('Notes (optional)', `<textarea name="notes" rows="2" placeholder="Workshop, brand, details&hellip;"></textarea>`)}
-      <button class="btn primary block" type="submit">${doc ? 'Save renewal' : 'Mark as done'}</button>
+      ${field('Notes (optional)', `<textarea name="notes" rows="2" placeholder="Workshop, brand, details&hellip;">${esc(v.notes)}</textarea>`)}
+      <button class="btn primary block" type="submit">${existing ? 'Save changes' : doc ? 'Save renewal' : 'Mark as done'}</button>
     </form>`;
 }
 
@@ -368,6 +424,7 @@ const forms = {
       S.data.odoLog.push({ carId: c.id, date: todayStr(), odo });
       S.save(); closeSheet();
       carTab = 'maintenance';
+      pendingQuick = c.id;
       location.hash = '#/car/' + c.id;
     }
   },
@@ -378,6 +435,7 @@ const forms = {
     if (odo == null || odo < 0) return toast('Enter a valid odometer');
     if (odo < c.odo && !confirm(`That is lower than the current ${fmtNum(c.odo)} km. Use it anyway?`)) return;
     setOdo(c, odo);
+    editingOdo = null;
     S.save(); closeSheet(); render();
     toast('Odometer updated');
   },
@@ -434,6 +492,34 @@ const forms = {
     toast(doc ? 'Renewal saved' : 'Logged');
   },
 
+  logEdit(fd, ds) {
+    const l = S.log(ds.id);
+    const item = S.item(l.itemId);
+    const car = S.car(l.carId);
+    const doc = l.type === 'doc';
+    const date = fd.get('date');
+    const odo = num(fd.get('odo'));
+    const expiry = fd.get('expiry') || null;
+    if (!date) return toast('Pick a date');
+    if (!doc && odo == null) return toast('Enter the odometer');
+    if (doc && !expiry) return toast('Enter the expiry date');
+    const prevOdo = l.odo;
+    Object.assign(l, { date, time: fd.get('time') || '', odo, cost: num(fd.get('cost')) || 0, expiry, notes: fd.get('notes').trim() });
+    if (odo != null && odo !== prevOdo) {
+      S.data.odoLog.push({ carId: car.id, date, odo });
+      if (odo > car.odo) car.odo = odo;
+    }
+    // Only the most recent entry drives the item's current due date.
+    const latest = S.data.logs.filter((x) => x.itemId === l.itemId)
+      .sort((a, b) => (b.date + (b.time || '')).localeCompare(a.date + (a.time || '')))[0];
+    if (item && latest && latest.id === l.id) {
+      if (doc) item.dueDate = expiry;
+      else { item.lastDate = date; item.lastOdo = odo; item.dueDateOverride = expiry; }
+    }
+    S.save(); closeSheet(); render();
+    toast('Saved');
+  },
+
   quick(fd, ds) {
     const car = S.car(ds.id);
     const picked = fd.getAll('p').map(Number);
@@ -465,6 +551,21 @@ async function shareOrDownload(filename, text, type) {
   return true;
 }
 
+function quickLog(item, car) {
+  const before = { lastDate: item.lastDate, lastOdo: item.lastOdo, dueDateOverride: item.dueDateOverride };
+  const log = {
+    id: S.uid(), carId: car.id, itemId: item.id, name: item.name, type: item.type,
+    date: todayStr(), time: nowTime(), odo: car.odo, cost: 0, expiry: null, notes: '',
+  };
+  S.data.logs.push(log);
+  Object.assign(item, { lastDate: log.date, lastOdo: log.odo, dueDateOverride: null });
+  S.save(); render();
+  toast(`${item.name} logged`, [
+    { label: 'Undo', run: () => { S.data.logs = S.data.logs.filter((x) => x.id !== log.id); Object.assign(item, before); S.save(); render(); } },
+    { label: 'Add details', run: () => openSheet('Add details', logForm(item, car, { existing: log, focus: 'cost' })) },
+  ]);
+}
+
 const actions = {
   closeSheet,
   home() { location.hash = '#/'; },
@@ -475,16 +576,8 @@ const actions = {
 
   addCar() { openSheet('Add car', carForm(null)); },
 
-  updateOdo(d) {
-    const c = S.car(d.id);
-    openSheet('Update odometer', `
-      <form data-form="odo" data-id="${c.id}" class="form">
-        <p class="muted">${esc(c.name)} &middot; currently ${fmtNum(c.odo)} km</p>
-        ${field('Odometer now (km)', `<input name="odo" type="number" inputmode="numeric" min="0" required value="${c.odo}" autofocus>`)}
-        <button class="btn primary block" type="submit">Save</button>
-      </form>`);
-    const i = document.querySelector('.sheet input[name=odo]'); if (i) { i.focus(); i.select(); }
-  },
+  editOdo(d) { editingOdo = d.id; render(); },
+  cancelOdo() { editingOdo = null; render(); },
 
   carMenu(d) {
     const c = S.car(d.id);
@@ -531,7 +624,7 @@ const actions = {
             <label class="check"><input type="checkbox" name="p" value="${i}" ${['Engine oil', 'Tires', 'Brake pads'].includes(p.name) ? 'checked' : ''}>
               <span>${esc(p.name)}<small>${[p.km ? 'every ' + fmtNum(p.km) + ' km' : '', p.months ? 'every ' + p.months + ' mo' : ''].filter(Boolean).join(' / ')}</small></span></label>` : '').join('')}
         </div>
-        <button class="btn primary block" type="submit">Add selected</button>
+        <button class="btn primary block sticky-cta" type="submit">Add selected</button>
       </form>`);
   },
 
@@ -561,7 +654,21 @@ const actions = {
         </div>
       </div>`);
   },
-  logItem(d) { const i = S.item(d.id); openSheet(i.type === 'doc' ? 'Renew document' : 'Mark as done', logForm(i, S.car(i.carId))); },
+  logItem(d) {
+    const item = S.item(d.id);
+    const car = S.car(item.carId);
+    closeSheet();
+    if (item.type === 'doc') return openSheet('Renew document', logForm(item, car, { focus: '' }));
+    const age = odoAgeDays(car);
+    // A fresh odometer means one tap is enough; otherwise ask for it first.
+    if (age != null && age <= 7) return quickLog(item, car);
+    openSheet('Mark as done', logForm(item, car, { focus: 'odo' }));
+  },
+  editLog(d) {
+    const l = S.log(d.id);
+    const item = S.item(l.itemId) || { name: l.name, type: l.type };
+    openSheet('Edit entry', logForm(item, S.car(l.carId), { existing: l, focus: '' }));
+  },
   deleteItem(d) {
     const i = S.item(d.id);
     if (!confirm(`Delete "${i.name}"? Its past history entries stay in the car's history.`)) return;
@@ -581,6 +688,7 @@ const actions = {
           ${l.expiry ? line('Valid until', fmtDate(l.expiry)) : ''}
           ${l.notes ? line('Notes', esc(l.notes)) : ''}
         </div>
+        <button class="btn" data-act="editLog" data-id="${l.id}">Edit entry</button>
         <button class="btn danger" data-act="deleteLog" data-id="${l.id}">Delete entry</button>
         <p class="muted">Deleting an entry does not change the item's current due date.</p>
       </div>`);
@@ -642,7 +750,13 @@ document.addEventListener('change', (e) => {
   }
 });
 
-window.addEventListener('hashchange', () => { closeSheet(); render(); window.scrollTo(0, 0); });
+window.addEventListener('hashchange', () => {
+  closeSheet();
+  editingOdo = null;
+  render();
+  window.scrollTo(0, 0);
+  if (pendingQuick) { const id = pendingQuick; pendingQuick = null; actions.quickSetup({ id }); }
+});
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeSheet(); });
 
 render();
